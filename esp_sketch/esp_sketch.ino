@@ -25,8 +25,8 @@ AsyncMqttClient mqttClient;
 
 /*
 EEPROM scheme:
-|--------0-31-------|--------32-63------|--------64-67---------|x|--------96-99--------|
-|SSID for home Wi-Fi|PASS for home Wi-Fi|Cold water meter value|x|Hot water meter value|
+|--------0-31-------|--------32-63------|------64-67------|
+|SSID for home Wi-Fi|PASS for home Wi-Fi|Water meter value|
 */
 
 // Home WiFi settings:
@@ -42,21 +42,19 @@ WiFiClient  client;
 // Deep sleep duration (seconds):
 const int sleepTimeS = 5;
 // MQTT publication frequency (seconds):
-#define SENDSEC 30 // 1800 seconds = half an hour, 86400 seconds = 24 hours
+#define SENDSEC 1800 // 1800 seconds = half an hour, 86400 seconds = 24 hours
 // EEPROM rewrite frequency (seconds):
 #define EEWRITESEC 120960 // 120960 seconds = 14 days
 
 // Pin assignment:
 #define BUTTON_PIN 4     // GPIO4 for change-mode button
-#define COLDWATER_PIN 12 // GPIO12 for cold water meter
-#define HOTWATER_PIN 13  // GPIO13 for hot water meter
+#define WATER_PIN 12 // GPIO12 for water meter
 
 // RTC memory addresses (persistently stored while deep sleep):
 #define COUNT_STEP_ADDR 64      // Steps count for measure how much time has passed
-#define COLDWATER_STATE_ADDR 65 // Previous step cold water meter state (close or open)
-#define HOTWATER_STATE_ADDR 66  // Previous step hot water meter state (close or open)
-#define WATER_VAL_ADDR 67       // Actual cold water meter indication (2 blocks of 4 bytes)
-#define WATER_OLD_VAL_ADDR 69   // Actual hot water meter indication (2 blocks of 4 bytes)
+#define PREV_WATER_STATE_ADDR 65 // Previous step water meter state (close or open)
+#define WATER_VAL_ADDR 67       // Actual water meter indication (1 block of 4 bytes)
+#define WATER_OLD_VAL_ADDR 69   // Previous water meter indication (1 block of 4 bytes)
 
 // ADC_MODE(ADC_VCC); // Use if you want to use batteries
 
@@ -71,16 +69,14 @@ extern "C" {
 
 // User struct to store water meters indications (2 blocks of 4 bytes):
 typedef struct {
-  long coldVal;
-  long hotVal;
+  long waterVal;
 } rtcStore;
 
 rtcStore rtcMem; // Struct to store current measurements
 rtcStore rtcMemPrev; // Struct to store current previous loaded into RTC measurements
 
 // Auxiliary arrays:
-int coldByte[4];
-int hotByte[4];
+int waterByte[4];
 
 //---------------------------------------------------------------------------------------------
 //---------------------------------MQTT handlers:----------------------------------------------
@@ -93,8 +89,8 @@ void onMqttConnect(bool sessionPresent) { // MQTT connect handler
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {// MQTT disconnect handler
   Serial.println("Disconnected from the broker");
-  Serial.println("Reconnecting to MQTT broker...");
-  mqttClient.connect();
+  // Serial.println("Reconnecting to MQTT broker...");
+  // mqttClient.connect();
 }
 
 void onMqttSubscribe(uint16_t packetId, uint8_t qos) {// MQTT subscription handler
@@ -114,12 +110,12 @@ void onMqttUnsubscribe(uint16_t packetId) {// MQTT unsubscription handler
 
 // MQTT get message handler:
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
+  String feedbackMessage = "";
   Serial.println("MATT message received");
   Serial.println("topic: "+String(topic)+"; qos: "+String(properties.qos)+"; dup: "+String(properties.dup)+"; retain: "+String(properties.retain)+"; len: "+String(len)+"; index: "+String(index));
   Serial.println("Payload: "+String(payload));
 
-  int coldByteVals[4];
-  int hotByteVals[4];
+  int waterByteVals[4];
   int cmd_water_type = String(payload).substring(0, String(payload).indexOf("|")).toInt(); // Water type placed before first "|" (1 - cold, 2 - hot)
   String cmd_water_commmand = String(payload).substring(2, String(payload).indexOf("|", 3)); // Command type placed before second "|"
   String cmd_water_value = String(payload).substring(3+cmd_water_commmand.length(), String(payload).length()); // New water meter value from user
@@ -128,22 +124,19 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
   Serial.println("Received value: "+String(cmd_water_value));
   if (cmd_water_type==WATER_CODE){ // Check if command assumes correct water meter type
     if (cmd_water_commmand=="set"){
-      rtcMem.coldVal = cmd_water_value.toInt();
-      String feedbackMessage = "Current water meter value updated!";
-      Serial.println(feedbackMessage);
-      mqttClient.publish(MQTT_FEEDBACK_TOPIC, 1, false, feedbackMessage.c_str());
-      Serial.println("rtcMem.coldVal: " + String(rtcMem.coldVal));
+      rtcMem.waterVal = cmd_water_value.toInt();
+      feedbackMessage = "Current water meter value updated: " + String(rtcMem.waterVal);
     }
     else {
-      Serial.println("Wrong command received. Skipping...");
+      feedbackMessage = "Wrong command received. List of allowed commands: ['set']";
     }
   }
   
   else {
-    String feedbackMessage = "Wrong command received: 'N|CMD|VALUE' message expected. Skipping...";
-    Serial.println(feedbackMessage);
-    mqttClient.publish(MQTT_FEEDBACK_TOPIC, 1, false, feedbackMessage.c_str());
+    feedbackMessage = "Wrong command received: " + String(payload) + " 'N|CMD|VALUE' message expected...";
   }
+  Serial.println(feedbackMessage);
+  mqttClient.publish(MQTT_FEEDBACK_TOPIC, 1, false, feedbackMessage.c_str());
   /*if (strcmp(topic, MQTT_SUBSCR_TOPIC) == 0)  {
     //setRelay(payload);
     mqttClient.publish(MQTT_FEEDBACK_TOPIC, 1, false, payload);
@@ -167,8 +160,7 @@ void setup()
     EEPROM.begin(512);
   // Seting all pins as inputs:
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(COLDWATER_PIN, INPUT_PULLUP);
-  pinMode(HOTWATER_PIN, INPUT_PULLUP);
+  pinMode(WATER_PIN, INPUT_PULLUP);
   // Getting operating mode:
   loadState = digitalRead(BUTTON_PIN); // Pressed = volage low level
   Serial.println("\nIs MODE button pressed? " + String(!loadState));
@@ -178,37 +170,32 @@ void setup()
   if (loadState) { // Button released
     Serial.println("\nESP8266 in MAIN mode!");
     // Readig previous measures from RTC and storing them into rtcMem variable:
-    system_rtc_mem_read(WATER_VAL_ADDR, &rtcMem, 2 * 4);
-    system_rtc_mem_read(WATER_OLD_VAL_ADDR, &rtcMemPrev, 2 * 4);
+    system_rtc_mem_read(WATER_VAL_ADDR, &rtcMem, 4);
+    system_rtc_mem_read(WATER_OLD_VAL_ADDR, &rtcMemPrev, 4);
     system_rtc_mem_read(COUNT_STEP_ADDR, &countStep, 4);
     // If step number bigger then (EEWRITESEC/sleepTimeS) or less then 0 - resetting step number:
     if (countStep > (EEWRITESEC / sleepTimeS) || countStep < 0) {
       countStep = 0;
       for (int i = 0; i < 4; ++i) // Getting measurements from EEPROM (byte by byte)
       {
-        coldByte[i] = EEPROM.read(64 + i);
-        hotByte[i] = EEPROM.read(96 + i);
+        waterByte[i] = EEPROM.read(64 + i);
       }
       // Translating the meter values into numerical form into rtcMem:
-      rtcMem.coldVal = coldByte[0] + 100 * coldByte[1] + 10000 * coldByte[2] + 1000000 * coldByte[3];
-      rtcMem.hotVal = hotByte[0] + 100 * hotByte[1] + 10000 * hotByte[2] + 1000000 * hotByte[3];
-      Serial.println("Data is extracted from EEPROM: cold=" + String(rtcMem.coldVal) + " hot=" + String(rtcMem.hotVal));
+      rtcMem.waterVal = waterByte[0] + 100 * waterByte[1] + 10000 * waterByte[2] + 1000000 * waterByte[3];
+      Serial.println("Consumption value is extracted from EEPROM: " + String(rtcMem.waterVal));
     }
     else {
       // Increasing step number:
       countStep += 1;
     }
     // Checking if water meter pins state changed:
-    if (checkWaterCounter(COLDWATER_PIN, COLDWATER_STATE_ADDR)) { //Состояние счетчика холодной воды изменилось = истрачено еще 10 л
-      rtcMem.coldVal += 10; // 10 litters more on cold consumption
-    }
-    if (checkWaterCounter(HOTWATER_PIN, HOTWATER_STATE_ADDR)) { //Состояние счетчика горячей воды изменилось = истрачено еще 10 л
-      rtcMem.hotVal += 10;// 10 litters more on hot consumption
+    if (checkWaterCounter(WATER_PIN, PREV_WATER_STATE_ADDR)) { //Состояние счетчика холодной воды изменилось = истрачено еще 10 л
+      rtcMem.waterVal += 10; // 10 litters more on consumption
     }
 
     // Writing all info into Serial:
-    Serial.println("Step number: " + String(countStep) + "\t Cold: " + String(rtcMem.coldVal) + "\tHot: " + String(rtcMem.hotVal));
-    Serial.println("Old values from RTC:\tCold: " + String(rtcMemPrev.coldVal) + "\told Hot: " + String(rtcMemPrev.hotVal));
+    Serial.println("Step number: " + String(countStep) + "\tConsumption: " + String(rtcMem.waterVal));
+    Serial.println("Old values from RTC: " + String(rtcMemPrev.waterVal));
     
     // SENDSEC seconds (equals SENDSEC/sleepTimeS steps) passed - publishing data on MQTT:
     if (countStep % (SENDSEC / sleepTimeS) == 0) {
@@ -255,16 +242,15 @@ void setup()
           c++;
         }
         // float extVCC = ESP.getVcc(); // Getting supply battery voltage
-        // String payload = String(rtcMem.coldVal)+";"+String(rtcMem.hotVal)+";"+String(extVCC);
-        String payload = String(rtcMem.coldVal)+";"+String(rtcMem.hotVal); // Payload string for publishing
+        // String payload = String(rtcMem.waterVal)+";"+String(extVCC);
+        String payload = String(rtcMem.waterVal); // Payload string for publishing
         
         // Publishing data on MQTT:
         mqttClient.publish(MQTT_WATER_TOPIC, 1, false, payload.c_str());
         Serial.println("Data sent to MQTT server: "+ payload);
         delay(1000);
-        // Storing sent values into rtcMemPrev (like previous measurements):
-        rtcMemPrev.coldVal = rtcMem.coldVal;
-        rtcMemPrev.hotVal = rtcMem.hotVal;
+        // Storing sent values into rtcMemPrev (as previous measurements):
+        rtcMemPrev.waterVal = rtcMem.waterVal;
       }
       else {
         Serial.println("\nWi-Fi connection failed!.. Try to use another SSID.");
@@ -272,31 +258,26 @@ void setup()
     }
     // EEWRITESEC seconds (equals EEWRITESEC/sleepTimeS steps) passed - saving data into EEPROM:
     if (countStep >= (EEWRITESEC/sleepTimeS)) {
-      int coldByteVals[4];
-      int hotByteVals[4];
+      int waterByteVals[4];
       // Splitting values on bytes:
       for (int i = 0; i < 4; ++i) {
-        coldByteVals[i] = (rtcMem.coldVal / int(pow(10, i * 2))) % 100; //[0]-два последних разряда, [3]-два первых разряда
-        hotByteVals[i] = (rtcMem.hotVal / int(pow(10, i * 2))) % 100;
+        waterByteVals[i] = (rtcMem.waterVal / int(pow(10, i * 2))) % 100; //[0]-два последних разряда, [3]-два первых разряда
       }
       ClearEeprom(64, 128); // Deleting old data from EEPROM
       delay(10);
       for (int i = 0; i < 4; ++i) {
-        EEPROM.write(64 + i, coldByteVals[i]);
-      }
-      for (int i = 0; i < 4; ++i) {
-        EEPROM.write(96 + i, hotByteVals[i]);
+        EEPROM.write(64 + i, waterByteVals[i]);
       }
       EEPROM.commit();
-      Serial.println("Added to EEPROM: cold=" + String(rtcMem.coldVal) + " hot=" + String(rtcMem.hotVal));
+      Serial.println("Added consumption to EEPROM: " + String(rtcMem.waterVal));
       countStep = 0; // Resetting step number
     }
 
     // Writing data into RTC memory:
-    Serial.println("Writings measures to RTC:\tcold=" + String(rtcMem.coldVal) + " hot=" + String(rtcMem.hotVal));
+    Serial.println("Writings measures to RTC: " + String(rtcMem.waterVal));
     system_rtc_mem_write(COUNT_STEP_ADDR, &countStep, 4); // Step number
-    system_rtc_mem_write(WATER_VAL_ADDR, &rtcMem, 2 * 4); // Water meters measurements
-    system_rtc_mem_write(WATER_OLD_VAL_ADDR, &rtcMemPrev, 2 * 4); // Previous water meters measurements
+    system_rtc_mem_write(WATER_VAL_ADDR, &rtcMem, 4); // Water meters measurements
+    system_rtc_mem_write(WATER_OLD_VAL_ADDR, &rtcMemPrev, 4); // Previous water meters measurements
 
     // All done - going to deep sleep:
     Serial.println("ESP8266 in sleep mode");
@@ -311,17 +292,15 @@ void setup()
     Serial.println("PASSWORD=");
     Serial.println(passwordAP);
     // Reading last saved in RTC values to show on web page:
-    system_rtc_mem_read(WATER_VAL_ADDR, &rtcMem, 2 * 4);
+    system_rtc_mem_read(WATER_VAL_ADDR, &rtcMem, 4);
     // If shit in data - getting values from EEPROM (can be on the first run):
-    if (rtcMem.coldVal > 99999999 || rtcMem.hotVal > 99999999 || rtcMem.coldVal < 0 || rtcMem.hotVal < 0) {
+    if (rtcMem.waterVal > 99999999 || rtcMem.waterVal < 0) {
       for (int i = 0; i < 4; ++i) // Reafding EEPROM values (byte by byte)
       {
-        coldByte[i] = EEPROM.read(64 + i);
-        hotByte[i] = EEPROM.read(96 + i);
+        waterByte[i] = EEPROM.read(64 + i);
       }
       // Translating the meter values into numerical form into rtcMem:
-      rtcMem.coldVal = coldByte[0] + 100 * coldByte[1] + 10000 * coldByte[2] + 1000000 * coldByte[3];
-      rtcMem.hotVal = hotByte[0] + 100 * hotByte[1] + 10000 * hotByte[2] + 1000000 * hotByte[3];
+      rtcMem.waterVal = waterByte[0] + 100 * waterByte[1] + 10000 * waterByte[2] + 1000000 * waterByte[3];
     }
     // Reading Wi-Fi settings saved in EEPROM to show on web page:
     for (int i = 0; i < 32; ++i) // Getting home Wi-Fi SSID and PASS
@@ -391,21 +370,27 @@ void D_AP_SER_Page() {
   s += "Текущие настройки Wi-Fi: SSID=" + String(ssid);
   s += " Password=" + String(password);
   s += "<p>";
-  s += "Текущие значения счетчиков: ХОЛОДНАЯ ВОДА=" + String(rtcMem.coldVal);
-  s += " ГОРЯЧАЯ ВОДА=" + String(rtcMem.hotVal);
   s += "<p>";
-  s += "Имя топика MQTT : ";
+  s += "Данные отправляются в MQTT каждые " + String(SENDSEC) + " секунд.";
+  s += "<p>";
+  s += "Текущие значения счетчиков: ХОЛОДНАЯ ВОДА=" + String(rtcMem.waterVal);
+  s += "<p>";
+  s += "Имя топика MQTT с даннными: ";
   s += MQTT_WATER_TOPIC;
-  s += ". Формат данных: 'хол;гор'.";
+  s += ". Имя топика MQTT для правки значений: ";
+  s += MQTT_SUBSCR_TOPIC;
+  s += ". Имя топика MQTT с подтверждениями от ESP: ";
+  s += MQTT_FEEDBACK_TOPIC;
+  s += ". Формат данных: '123456'.";
   s += "<form method='get' action='a'><label>SSID: </label><input name='ssid' length=32><label>Pasword: </label><input name='pass' length=32><br />";
-  s += "<label>Cold: </label><input name='coldInit' length=8><br /><input type='submit'>";
+  s += "<label>Water: </label><input name='waterInit' length=8><br /><input type='submit'>";
   s += "</form>";
   s += "</html>\r\n\r\n";
 
   server.send( 200 , "text/html", s);
 }
 
-// Function for submitt data from HTML web page:
+// Function for submit data from HTML web page:
 void Get_Req() {
   String sssid = ""; // SSID variable
   String passs = ""; // PASS variable
@@ -416,20 +401,18 @@ void Get_Req() {
     Serial.println("Wi-Fi settigns from web-page: " + String(sssid) + "; " + String(passs));
   }
 
-  String coldInit = ""; // Current water consumption variable
-  int coldInitInt; // Current water consumption variable (integer)
-  int coldByteVals[4];
-  //int hotByteVals[4];
+  String waterInit = ""; // Current water consumption variable
+  int waterInitInt; // Current water consumption variable (integer)
+  int waterByteVals[4];
 
-  if (server.hasArg("coldInit")) {
-    coldInit = server.arg("coldInit"); // Getting value from web page
+  if (server.hasArg("waterInit")) {
+    waterInit = server.arg("waterInit"); // Getting value from web page
     // Transforming into integer:
-    coldInitInt = coldInit.toInt();
-    Serial.println("Water measures from web-page: "+String(coldInitInt));
+    waterInitInt = waterInit.toInt();
+    Serial.println("Water measures from web-page: "+String(waterInitInt));
     //Разбиваем 8-значное число на 4 байта:
     for (int i = 0; i < 4; ++i) {
-      coldByteVals[i] = (coldInitInt / int(pow(10, i * 2))) % 100;
-      //hotByteVals[i] = (hotInitInt / int(pow(10, i * 2))) % 100;
+      waterByteVals[i] = (waterInitInt / int(pow(10, i * 2))) % 100;
     }
   }
 
@@ -450,43 +433,36 @@ void Get_Req() {
   }
 
   // Storing new water consuption values from web page:
-  if (coldInit.length() > 1) {
+  if (waterInit.length() > 1) {
     ClearEeprom(64, 128); // Deleting old measures from EEPROM
     delay(10);
     for (int i = 0; i < 4; ++i)
     {
-      EEPROM.write(64 + i, coldByteVals[i]);
+      EEPROM.write(64 + i, waterByteVals[i]);
     }
-    /*
-    for (int i = 0; i < 4; ++i)
-    {
-      EEPROM.write(96 + i, hotByteVals[i]);
-    }
-    */
     EEPROM.commit();
     delay(10);
-    // Serial.println("Cold=" + String(coldByteVals[0] + 100 * coldByteVals[1] + 10000 * coldByteVals[2] + 1000000 * coldByteVals[3]) + "; Hot=" + String(hotByteVals[0] + 100 * hotByteVals[1] + 10000 * hotByteVals[2] + 1000000 * hotByteVals[3]));
-    Serial.println("Cold=" + String(coldByteVals[0] + 100 * coldByteVals[1] + 10000 * coldByteVals[2] + 1000000 * coldByteVals[3]));
+    Serial.println("Consumption=" + String(waterByteVals[0] + 100 * waterByteVals[1] + 10000 * waterByteVals[2] + 1000000 * waterByteVals[3]));
+    // Resetting step number:
+    countStep = 0;
+    system_rtc_mem_write(COUNT_STEP_ADDR, &countStep, 4); // Step number
     delay(100);
 
     // Checking that everything was saved correctly:
     for (int i = 0; i < 4; ++i) // Raading EEPROM byte by byte
       {
-        coldByte[i] = EEPROM.read(64 + i);
-        //hotByte[i] = EEPROM.read(96 + i);
+        waterByte[i] = EEPROM.read(64 + i);
       }
       //Переводим показания счетчиков в числовой вид и выводим в Serial:
-      int a = coldByte[0] + 100 * coldByte[1] + 10000 * coldByte[2] + 1000000 * coldByte[3];
-      // int b = hotByte[0] + 100 * hotByte[1] + 10000 * hotByte[2] + 1000000 * hotByte[3];
-      // Serial.println("Data is extracted from EEPROM: cold=" + String(a) + " hot=" + String(b));
-      Serial.println("Data is extracted from EEPROM: cold=" + String(a));
+      int a = waterByte[0] + 100 * waterByte[1] + 10000 * waterByte[2] + 1000000 * waterByte[3];
+      Serial.println("Consumption value is extracted from EEPROM: " + String(a));
   }
 
 
   String s = "\r\n\r\n<!DOCTYPE HTML>\r\n<html>";
   s += "\r\n<head>\r\n<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\r\n<!head>\r\n";
   s += "\r\n<h1>Настройки загружены!</h1>";
-  s += "<p>Данные успешно сохранены! Для штатной работы выключите и включите систему.</html>\r\n\r\n";
+  s += "<p>Данные успешно сохранены! Для штатной работы выключите и включите систему или просто нажмите кнопку RESET.</html>\r\n\r\n";
   server.send(200, "text/html", s);
 }
 
