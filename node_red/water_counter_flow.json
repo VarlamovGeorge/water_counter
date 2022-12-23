@@ -1,0 +1,317 @@
+[
+    {
+        "id": "94377cde.74ae8",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "e62482c5.95fef8",
+        "type": "mqtt in",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "topic": "WATER_COLD",
+        "qos": "1",
+        "datatype": "auto",
+        "broker": "7224b82b.a4bc98",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 340,
+        "y": 260,
+        "wires": [
+            [
+                "a8a829e9.dbb028",
+                "91681b69.3b9768"
+            ]
+        ]
+    },
+    {
+        "id": "d7bcbb40.65faa",
+        "type": "mqtt out",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "topic": "WATER_COLD",
+        "qos": "1",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "7224b82b.a4bc98",
+        "x": 360,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "ddab7e24.0794d8",
+        "type": "inject",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "WATER_COLD",
+        "payload": "101010",
+        "payloadType": "str",
+        "x": 160,
+        "y": 80,
+        "wires": [
+            [
+                "d7bcbb40.65faa"
+            ]
+        ]
+    },
+    {
+        "id": "b31b7234.4fa3e",
+        "type": "debug",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "x": 1290,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "ac68fb7e.03ec4",
+        "type": "file",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "filename": "/home/pi/Documents/water_mqtt/water.log",
+        "filenameType": "str",
+        "appendNewline": true,
+        "createDir": false,
+        "overwriteFile": "false",
+        "encoding": "none",
+        "x": 1430,
+        "y": 440,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "a8a829e9.dbb028",
+        "type": "function",
+        "z": "94377cde.74ae8",
+        "name": "Add date",
+        "func": "// msg.payload = new Date().toISOString() + \" Cold: \" + msg.payload\n\nvar d = new Date();\nd = new Date(d.getTime() - d.getTimezoneOffset() * 60000)\nmsg.payload = d.toISOString() + \" Cold: \" + msg.payload;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 340,
+        "wires": [
+            [
+                "ac68fb7e.03ec4",
+                "b31b7234.4fa3e"
+            ]
+        ]
+    },
+    {
+        "id": "91681b69.3b9768",
+        "type": "function",
+        "z": "94377cde.74ae8",
+        "name": "Parse cold values",
+        "func": "var d = new Date();\nd = new Date(d.getTime() - d.getTimezoneOffset() * 60000)\nvar date = d.toISOString();\n\n// var date = new Date().toISOString();\nvar value = msg.payload;\n\nmsg.topic = \"INSERT INTO WATER (DATE, TYPE, VALUE) VALUES ($date, $type, $value)\";\nmsg.payload = [date, '1', value];\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 420,
+        "wires": [
+            [
+                "75add1aed60b95f7"
+            ]
+        ]
+    },
+    {
+        "id": "e8706ba3.0767c",
+        "type": "function",
+        "z": "94377cde.74ae8",
+        "name": "Parse hot values",
+        "func": "var d = new Date();\nd = new Date(d.getTime() - d.getTimezoneOffset() * 60000)\nvar date = d.toISOString();\n// var date = new Date().toISOString();\nvar value = msg.payload;\n\nmsg.topic = \"INSERT INTO WATER (DATE, TYPE, VALUE) VALUES ($date, $type, $value)\";\nmsg.payload = [date, '2', value];\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 500,
+        "wires": [
+            [
+                "75add1aed60b95f7"
+            ]
+        ]
+    },
+    {
+        "id": "fb63bc46.300448",
+        "type": "inject",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "WATER_HOT",
+        "payload": "123456",
+        "payloadType": "str",
+        "x": 160,
+        "y": 540,
+        "wires": [
+            [
+                "cb1eaf45.0a0278"
+            ]
+        ]
+    },
+    {
+        "id": "cb1eaf45.0a0278",
+        "type": "mqtt out",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "topic": "WATER_HOT",
+        "qos": "1",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "7224b82b.a4bc98",
+        "x": 420,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "b0cc3360.c4813",
+        "type": "mqtt in",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "topic": "WATER_HOT",
+        "qos": "1",
+        "datatype": "auto",
+        "broker": "7224b82b.a4bc98",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 630,
+        "y": 660,
+        "wires": [
+            [
+                "e8706ba3.0767c",
+                "fc4319d1.2a7b98"
+            ]
+        ]
+    },
+    {
+        "id": "fc4319d1.2a7b98",
+        "type": "function",
+        "z": "94377cde.74ae8",
+        "name": "Add date",
+        "func": "// msg.payload = new Date().toISOString() + \" Hot: \" + msg.payload\n\nvar d = new Date();\nd = new Date(d.getTime() - d.getTimezoneOffset() * 60000)\nmsg.payload = d.toISOString() + \" Hot: \" + msg.payload;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 940,
+        "y": 620,
+        "wires": [
+            [
+                "ac68fb7e.03ec4",
+                "b31b7234.4fa3e"
+            ]
+        ]
+    },
+    {
+        "id": "75add1aed60b95f7",
+        "type": "sqlite",
+        "z": "94377cde.74ae8",
+        "mydb": "1cfe9c7f8ff70374",
+        "sqlquery": "msg.topic",
+        "sql": "",
+        "name": "Insert value",
+        "x": 770,
+        "y": 460,
+        "wires": [
+            [
+                "a7ef7ff4623572e4"
+            ]
+        ]
+    },
+    {
+        "id": "a7ef7ff4623572e4",
+        "type": "debug",
+        "z": "94377cde.74ae8",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "x": 970,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "7224b82b.a4bc98",
+        "type": "mqtt-broker",
+        "name": "mqtt",
+        "broker": "192.168.1.6",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "1cfe9c7f8ff70374",
+        "type": "sqlitedb",
+        "db": "/home/pi/dbs/water_counter.db",
+        "mode": "RWC"
+    }
+]
